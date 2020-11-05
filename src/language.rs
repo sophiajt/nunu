@@ -27,6 +27,17 @@ impl Span {
     pub fn unknown() -> Span {
         Span { start: 0, end: 0 }
     }
+
+    /// Extends the current span to cover the range inclusive of both the old and given spans
+    pub fn extend(&mut self, span: Span) {
+        if span.start < self.start {
+            self.start = span.start;
+        }
+
+        if span.end > self.end {
+            self.end = span.end;
+        }
+    }
 }
 pub trait SpannedItem: Sized + Debug {
     /// Converts a value into a Spanned value
@@ -98,6 +109,7 @@ pub struct Scope {
 pub enum Expression {
     Integer(BigInt),
     String(String),
+    Call(Box<SpannedExpression>, Vec<SpannedExpression>),
     Garbage,
 }
 
@@ -126,5 +138,63 @@ impl ExpressionGroup {
     }
     pub fn push(&mut self, pipeline: ExpressionPipeline) {
         self.pipelines.push(pipeline)
+    }
+}
+
+/// A 'Group' is a semicolon-seperated list of pipelines. Each pipeline, except the last, runs to completion and has
+/// does not automatically run `autoview` on the output. The last pipeline will automatically run `autoview` on its
+/// output.
+///
+/// # Example
+/// A group of two elements: a 3-step pipeline and a 1-step pipeline. Only `finally another thing` will automatically
+/// have its contents viewed.
+/// ```
+/// > do this | do that | do one more; finally another thing
+/// ```
+#[derive(Debug)]
+pub struct Group {
+    pub pipelines: Vec<Pipeline>,
+}
+impl Group {
+    pub fn new() -> Group {
+        Group { pipelines: vec![] }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.pipelines.is_empty()
+    }
+    pub fn push(&mut self, pipeline: Pipeline) {
+        self.pipelines.push(pipeline)
+    }
+}
+
+#[derive(Debug)]
+pub struct Pipeline {
+    pub commands: Vec<Command>,
+}
+impl Pipeline {
+    pub fn new() -> Pipeline {
+        Pipeline { commands: vec![] }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+    pub fn push(&mut self, command: Command) {
+        self.commands.push(command)
+    }
+}
+
+#[derive(Debug)]
+pub struct Command {
+    pub elements: Vec<Spanned<String>>,
+}
+impl Command {
+    pub fn new() -> Command {
+        Command { elements: vec![] }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+    pub fn push(&mut self, element: Spanned<String>) {
+        self.elements.push(element)
     }
 }

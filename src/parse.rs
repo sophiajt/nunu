@@ -1,57 +1,8 @@
 use crate::language::{
-    Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, ParseError, Scope, Span,
-    Spanned, SpannedExpression, SpannedItem, Token, TokenContents,
+    Command, Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, Group, ParseError,
+    Pipeline, Scope, Span, Spanned, SpannedExpression, SpannedItem, Token, TokenContents,
 };
 use crate::lite_parse::lex;
-use std::fmt::Debug;
-
-#[derive(Debug)]
-pub struct Group {
-    pub pipelines: Vec<Pipeline>,
-}
-impl Group {
-    pub fn new() -> Group {
-        Group { pipelines: vec![] }
-    }
-    pub fn is_empty(&self) -> bool {
-        self.pipelines.is_empty()
-    }
-    pub fn push(&mut self, pipeline: Pipeline) {
-        self.pipelines.push(pipeline)
-    }
-}
-
-#[derive(Debug)]
-pub struct Pipeline {
-    pub commands: Vec<Command>,
-}
-impl Pipeline {
-    pub fn new() -> Pipeline {
-        Pipeline { commands: vec![] }
-    }
-    pub fn is_empty(&self) -> bool {
-        self.commands.is_empty()
-    }
-    pub fn push(&mut self, command: Command) {
-        self.commands.push(command)
-    }
-}
-
-#[derive(Debug)]
-pub struct Command {
-    pub elements: Vec<Spanned<String>>,
-}
-impl Command {
-    pub fn new() -> Command {
-        Command { elements: vec![] }
-    }
-    pub fn is_empty(&self) -> bool {
-        self.elements.is_empty()
-    }
-    pub fn push(&mut self, element: Spanned<String>) {
-        self.elements.push(element)
-    }
-}
 
 fn group(tokens: Vec<Token>) -> (Vec<Group>, Option<ParseError>) {
     let mut output = vec![];
@@ -146,7 +97,24 @@ fn parse_call(call: Command, _scope: &Box<Scope>) -> (SpannedExpression, Option<
             }),
         )
     } else {
-        parse_expr(&call.elements[0], ExpressionShape::String)
+        let mut err = None;
+        let (head, error) = parse_expr(&call.elements[0], ExpressionShape::String);
+        let mut span = head.span;
+        if err.is_none() {
+            err = error;
+        }
+
+        let mut args = vec![];
+        for arg in call.elements.iter().skip(1) {
+            let (arg, error) = parse_expr(arg, ExpressionShape::Integer);
+            if err.is_none() {
+                err = error;
+            }
+            span.extend(arg.span);
+            args.push(arg);
+        }
+
+        (Expression::Call(Box::new(head), args).spanned(span), err)
     }
 }
 
