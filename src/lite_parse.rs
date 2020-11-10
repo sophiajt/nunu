@@ -5,6 +5,10 @@ use crate::language::{BlockKind, ParseError, Span, Spanned, SpannedItem, Token, 
 
 pub type Input<'t> = Peekable<CharIndices<'t>>;
 
+/// Finds the extents of a bare (un-classified) token, returning the string with its associated span,
+/// along with any parse error that was discovered along the way.
+/// Bare tokens are unparsed content separated by spaces or a command separator (like pipe or semicolon)
+/// Bare tokens may be surrounded by quotes (single, double, or backtick) or braces (square, paren, curly)
 pub fn bare(src: &mut Input, span_offset: usize) -> (Spanned<String>, Option<ParseError>) {
     let mut bare = String::new();
     let start_offset = if let Some((pos, _)) = src.peek() {
@@ -87,6 +91,9 @@ pub fn bare(src: &mut Input, span_offset: usize) -> (Spanned<String>, Option<Par
     (bare.spanned(span), None)
 }
 
+/// Breaks the input string into a vector of tokens. This tokenization only tries to classify separators like
+/// semicolons, pipes, etc from external bare values (values that haven't been classified further)
+/// Takes in a string and and offset, which is used to offset the spans created (for when this function is used to parse inner strings)
 pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) {
     let mut char_indices = input.char_indices().peekable();
     let mut error = None;
@@ -96,7 +103,20 @@ pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) 
     while let Some((idx, c)) = char_indices.peek() {
         if *c == '|' {
             let idx = *idx;
+            let prev_idx = idx;
             let _ = char_indices.next();
+            if let Some((idx, c)) = char_indices.peek() {
+                if *c == '|' {
+                    // we have '||' instead of '|'
+                    let idx = *idx;
+                    let _ = char_indices.next();
+                    output.push(Token::new(
+                        TokenContents::Bare("||".into()),
+                        Span::new(span_offset + prev_idx, span_offset + idx + 1),
+                    ));
+                    continue;
+                }
+            }
             output.push(Token::new(
                 TokenContents::Pipe,
                 Span::new(span_offset + idx, span_offset + idx + 1),
@@ -115,7 +135,7 @@ pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) 
                 TokenContents::EOL,
                 Span::new(span_offset + idx, span_offset + idx + 1),
             ));
-        } else if *c == ' ' || *c == '\t' {
+        } else if c.is_whitespace() {
             let _ = char_indices.next();
         } else {
             let (result, err) = bare(&mut char_indices, span_offset);

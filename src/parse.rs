@@ -1,11 +1,12 @@
 use crate::language::{
-    Command, Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, Group, ParseError,
-    Pipeline, Scope, Span, Spanned, SpannedExpression, SpannedItem, Token, TokenContents,
+    Command, Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, Group, LiteBlock,
+    ParseError, Pipeline, Scope, Span, Spanned, SpannedExpression, SpannedItem, Token,
+    TokenContents,
 };
 use crate::lite_parse::lex;
 
-fn group(tokens: Vec<Token>) -> (Vec<Group>, Option<ParseError>) {
-    let mut output = vec![];
+fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
+    let mut groups = vec![];
     let mut group = Group::new();
     let mut pipeline = Pipeline::new();
     let mut command = Command::new();
@@ -22,7 +23,7 @@ fn group(tokens: Vec<Token>) -> (Vec<Group>, Option<ParseError>) {
                     pipeline = Pipeline::new();
                 }
                 if !group.is_empty() {
-                    output.push(group);
+                    groups.push(group);
                     group = Group::new();
                 }
             }
@@ -31,7 +32,10 @@ fn group(tokens: Vec<Token>) -> (Vec<Group>, Option<ParseError>) {
                     pipeline.push(command);
                     command = Command::new();
                 } else {
-                    return (output, Some(ParseError::UnexpectedPipe(token.span)));
+                    return (
+                        LiteBlock::new(groups),
+                        Some(ParseError::UnexpectedPipe(token.span)),
+                    );
                 }
             }
             TokenContents::Semicolon => {
@@ -56,10 +60,10 @@ fn group(tokens: Vec<Token>) -> (Vec<Group>, Option<ParseError>) {
         group.push(pipeline);
     }
     if !group.is_empty() {
-        output.push(group);
+        groups.push(group);
     }
 
-    (output, None)
+    (LiteBlock::new(groups), None)
 }
 
 fn parse_expr(
@@ -119,13 +123,13 @@ fn parse_call(call: Command, _scope: &Box<Scope>) -> (SpannedExpression, Option<
 }
 
 fn parse_helper(
-    groups: Vec<Group>,
+    lite_block: LiteBlock,
     scope: &Box<Scope>,
 ) -> (Vec<ExpressionGroup>, Option<ParseError>) {
     let mut output = vec![];
     let mut err = None;
 
-    for group in groups {
+    for group in lite_block.groups {
         let mut out_group = ExpressionGroup::new();
         for pipeline in group.pipelines {
             let mut out_pipe = ExpressionPipeline::new();

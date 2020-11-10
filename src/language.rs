@@ -141,6 +141,15 @@ impl ExpressionGroup {
     }
 }
 
+pub struct LiteBlock {
+    pub groups: Vec<Group>,
+}
+impl LiteBlock {
+    pub fn new(groups: Vec<Group>) -> Self {
+        Self { groups }
+    }
+}
+
 /// A 'Group' is a semicolon-seperated list of pipelines. Each pipeline, except the last, runs to completion and has
 /// does not automatically run `autoview` on the output. The last pipeline will automatically run `autoview` on its
 /// output.
@@ -167,6 +176,11 @@ impl Group {
     }
 }
 
+/// A series of pipe-separated commands which together form a pipeline where data flows left-to-right
+/// # Example
+/// ```
+/// > ls | where size > 10kb
+/// ```
 #[derive(Debug)]
 pub struct Pipeline {
     pub commands: Vec<Command>,
@@ -183,6 +197,11 @@ impl Pipeline {
     }
 }
 
+/// A single command with its associated arguments
+/// # Example
+/// ```
+/// ls -la foo
+/// ```
 #[derive(Debug)]
 pub struct Command {
     pub elements: Vec<Spanned<String>>,
