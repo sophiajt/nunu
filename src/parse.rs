@@ -1,36 +1,36 @@
 use crate::language::{
-    Command, Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, Group, LiteBlock,
-    ParseError, Pipeline, Scope, Span, Spanned, SpannedExpression, SpannedItem, Token,
-    TokenContents,
+    Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand,
+    LiteGroup, LitePipeline, ParseError, Scope, Span, Spanned, SpannedExpression, SpannedItem,
+    Token, TokenContents,
 };
 use crate::lite_parse::lex;
 
 fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
     let mut groups = vec![];
-    let mut group = Group::new();
-    let mut pipeline = Pipeline::new();
-    let mut command = Command::new();
+    let mut group = LiteGroup::new();
+    let mut pipeline = LitePipeline::new();
+    let mut command = LiteCommand::new();
 
     for token in tokens {
         match token.contents {
             TokenContents::EOL => {
                 if !command.is_empty() {
                     pipeline.push(command);
-                    command = Command::new();
+                    command = LiteCommand::new();
                 }
                 if !pipeline.is_empty() {
                     group.push(pipeline);
-                    pipeline = Pipeline::new();
+                    pipeline = LitePipeline::new();
                 }
                 if !group.is_empty() {
                     groups.push(group);
-                    group = Group::new();
+                    group = LiteGroup::new();
                 }
             }
             TokenContents::Pipe => {
                 if !command.is_empty() {
                     pipeline.push(command);
-                    command = Command::new();
+                    command = LiteCommand::new();
                 } else {
                     return (
                         LiteBlock::new(groups),
@@ -41,11 +41,11 @@ fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
             TokenContents::Semicolon => {
                 if !command.is_empty() {
                     pipeline.push(command);
-                    command = Command::new();
+                    command = LiteCommand::new();
                 }
                 if !pipeline.is_empty() {
                     group.push(pipeline);
-                    pipeline = Pipeline::new();
+                    pipeline = LitePipeline::new();
                 }
             }
             TokenContents::Bare(bare) => {
@@ -91,7 +91,7 @@ fn parse_expr(
     }
 }
 
-fn parse_call(call: Command, _scope: &Box<Scope>) -> (SpannedExpression, Option<ParseError>) {
+fn parse_call(call: LiteCommand, _scope: &Box<Scope>) -> (SpannedExpression, Option<ParseError>) {
     if call.elements.is_empty() {
         (
             Expression::Garbage.spanned_unknown(),

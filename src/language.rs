@@ -142,15 +142,15 @@ impl ExpressionGroup {
 }
 
 pub struct LiteBlock {
-    pub groups: Vec<Group>,
+    pub groups: Vec<LiteGroup>,
 }
 impl LiteBlock {
-    pub fn new(groups: Vec<Group>) -> Self {
+    pub fn new(groups: Vec<LiteGroup>) -> Self {
         Self { groups }
     }
 }
 
-/// A 'Group' is a semicolon-seperated list of pipelines. Each pipeline, except the last, runs to completion and has
+/// A semicolon-seperated list of pipelines. Each pipeline, except the last, runs to completion and
 /// does not automatically run `autoview` on the output. The last pipeline will automatically run `autoview` on its
 /// output.
 ///
@@ -161,17 +161,17 @@ impl LiteBlock {
 /// > do this | do that | do one more; finally another thing
 /// ```
 #[derive(Debug)]
-pub struct Group {
-    pub pipelines: Vec<Pipeline>,
+pub struct LiteGroup {
+    pub pipelines: Vec<LitePipeline>,
 }
-impl Group {
-    pub fn new() -> Group {
-        Group { pipelines: vec![] }
+impl LiteGroup {
+    pub fn new() -> LiteGroup {
+        LiteGroup { pipelines: vec![] }
     }
     pub fn is_empty(&self) -> bool {
         self.pipelines.is_empty()
     }
-    pub fn push(&mut self, pipeline: Pipeline) {
+    pub fn push(&mut self, pipeline: LitePipeline) {
         self.pipelines.push(pipeline)
     }
 }
@@ -182,17 +182,17 @@ impl Group {
 /// > ls | where size > 10kb
 /// ```
 #[derive(Debug)]
-pub struct Pipeline {
-    pub commands: Vec<Command>,
+pub struct LitePipeline {
+    pub commands: Vec<LiteCommand>,
 }
-impl Pipeline {
-    pub fn new() -> Pipeline {
-        Pipeline { commands: vec![] }
+impl LitePipeline {
+    pub fn new() -> LitePipeline {
+        LitePipeline { commands: vec![] }
     }
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }
-    pub fn push(&mut self, command: Command) {
+    pub fn push(&mut self, command: LiteCommand) {
         self.commands.push(command)
     }
 }
@@ -203,12 +203,12 @@ impl Pipeline {
 /// ls -la foo
 /// ```
 #[derive(Debug)]
-pub struct Command {
+pub struct LiteCommand {
     pub elements: Vec<Spanned<String>>,
 }
-impl Command {
-    pub fn new() -> Command {
-        Command { elements: vec![] }
+impl LiteCommand {
+    pub fn new() -> LiteCommand {
+        LiteCommand { elements: vec![] }
     }
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
