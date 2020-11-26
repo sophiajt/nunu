@@ -91,7 +91,7 @@ fn parse_list(
     for lite_pipeline in &lite_pipeline.pipelines {
         for lite_inner in &lite_pipeline.commands {
             for part in &lite_inner.elements {
-                let item = if part.item.ends_with(',') {
+                let item = if part.ends_with(',') {
                     let mut str: String = part.item.clone();
                     str.pop();
                     str.spanned(Span::new(part.span.start, part.span.end - 1))
@@ -126,7 +126,7 @@ fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
 
     // Check for a parameter list
     let params = if let Some(head) = lite_block.head() {
-        if head.item.starts_with('[') {
+        if head.starts_with('[') {
             let (params, err) = parse_list(&head, scope);
             if error.is_none() {
                 error = err;
@@ -154,9 +154,14 @@ fn parse_expr(
     shape: &ExpressionShape,
     scope: &Scope,
 ) -> (Spanned<Expression>, Option<ParseError>) {
+    // TODO: pass variable paths and invocations
+    if s.starts_with('$') {
+        return (Expression::Variable(s.item.clone()).spanned(s.span), None);
+    }
+
     match shape {
         ExpressionShape::Integer => {
-            if let Some(i) = num_bigint::BigInt::parse_bytes(s.item.as_bytes(), 10) {
+            if let Some(i) = num_bigint::BigInt::parse_bytes(s.as_bytes(), 10) {
                 (Expression::Integer(i).spanned(s.span), None)
             } else {
                 (
@@ -173,7 +178,7 @@ fn parse_expr(
             (Expression::String(s.item.clone()).spanned(s.span), None)
         }
         ExpressionShape::Block => {
-            if s.item.starts_with('{') && s.item.ends_with('}') {
+            if s.starts_with('{') && s.ends_with('}') {
                 parse_block(s, scope)
             } else {
                 (
@@ -213,7 +218,7 @@ pub fn garbage(span: Span) -> Spanned<Expression> {
 }
 
 fn trim_curly_braces(input: &Spanned<String>) -> Spanned<String> {
-    let mut chars = input.item.chars();
+    let mut chars = input.chars();
 
     match (chars.next(), chars.next_back()) {
         (Some('{'), Some('}')) => chars
@@ -224,7 +229,7 @@ fn trim_curly_braces(input: &Spanned<String>) -> Spanned<String> {
 }
 
 fn trim_square_braces(input: &Spanned<String>) -> Spanned<String> {
-    let mut chars = input.item.chars();
+    let mut chars = input.chars();
 
     match (chars.next(), chars.next_back()) {
         (Some('['), Some(']')) => chars
@@ -323,6 +328,15 @@ fn parse_set_variable(
             }),
         );
     }
+    if call.elements[2].item != "=" {
+        return (
+            garbage(call.elements[2].span),
+            Some(ParseError::UnexpectedType {
+                expected: "equals".into(),
+                span: call.elements[2].span,
+            }),
+        );
+    }
 
     let variable = &call.elements[1];
     let (expr, err) = parse_expr(&call.elements[3], &ExpressionShape::Any, scope);
@@ -345,9 +359,9 @@ fn parse_call(call: LiteCommand, scope: &mut Scope) -> (Spanned<Expression>, Opt
                 span: Span::unknown(),
             }),
         )
-    } else if call.elements[0].item.starts_with('^') {
+    } else if call.elements[0].starts_with('^') {
         parse_external_call(call, scope)
-    } else if call.elements[0].item.starts_with('$') || call.elements[0].item.starts_with('{') {
+    } else if call.elements[0].starts_with('$') || call.elements[0].starts_with('{') {
         parse_value_call(call, scope)
     } else if call.elements[0].item == "set" {
         parse_set_variable(call, scope)

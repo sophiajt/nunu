@@ -1,11 +1,19 @@
 use num_bigint::BigInt;
-use std::collections::HashMap;
 use std::fmt::Debug;
+use std::{collections::HashMap, ops::Deref};
 
 #[derive(Debug, Clone)]
 pub struct Spanned<T: Clone + Debug> {
     pub item: T,
     pub span: Span,
+}
+
+impl<T: Clone + Debug> Deref for Spanned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &<Self as std::ops::Deref>::Target {
+        &self.item
+    }
 }
 
 #[derive(Debug)]
@@ -130,6 +138,7 @@ impl<'a> Scope<'a> {
 pub enum Expression {
     Integer(BigInt),
     String(String),
+    Variable(String),
     SetVariable(String, Box<Spanned<Expression>>),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
     ExternalCall(Spanned<String>, Vec<Spanned<String>>),
