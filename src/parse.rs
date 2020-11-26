@@ -66,6 +66,87 @@ fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
     (LiteBlock::new(groups), None)
 }
 
+fn parse_list(
+    s: &Spanned<String>,
+    scope: &Scope,
+) -> (Vec<Spanned<Expression>>, Option<ParseError>) {
+    let contents = trim_square_braces(&s);
+
+    let (output, error) = lex(&contents.item, contents.span.start);
+    if error.is_some() {
+        return (vec![], error);
+    }
+
+    let (lite_block, error) = group(output);
+    if error.is_some() {
+        return (vec![], error);
+    }
+
+    if lite_block.groups.is_empty() {
+        return (vec![], None);
+    }
+    let lite_pipeline = &lite_block.groups[0];
+    let mut output = vec![];
+    let mut error = None;
+    for lite_pipeline in &lite_pipeline.pipelines {
+        for lite_inner in &lite_pipeline.commands {
+            for part in &lite_inner.elements {
+                let item = if part.item.ends_with(',') {
+                    let mut str: String = part.item.clone();
+                    str.pop();
+                    str.spanned(Span::new(part.span.start, part.span.end - 1))
+                } else {
+                    part.clone()
+                };
+                let (part, err) = parse_expr(&item, &ExpressionShape::Any, scope);
+                output.push(part);
+
+                if error.is_none() {
+                    error = err;
+                }
+            }
+        }
+    }
+
+    (output, error)
+}
+
+fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Option<ParseError>) {
+    let contents = trim_curly_braces(&s);
+    let mut error = None;
+    let (output, err) = lex(&contents.item, contents.span.start);
+    if err.is_some() {
+        return (garbage(s.span), err);
+    }
+
+    let (mut lite_block, err) = group(output);
+    if err.is_some() {
+        return (garbage(s.span), err);
+    }
+
+    // Check for a parameter list
+    let params = if let Some(head) = lite_block.head() {
+        if head.item.starts_with('[') {
+            let (params, err) = parse_list(&head, scope);
+            if error.is_none() {
+                error = err;
+            }
+            lite_block.remove_head();
+            Some(params)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (result, err) = parse_helper(lite_block, scope);
+    if error.is_none() {
+        error = err;
+    }
+    (Expression::Block(params, result).spanned(s.span), error)
+}
+
 fn parse_expr(
     s: &Spanned<String>,
     shape: &ExpressionShape,
@@ -89,6 +170,7 @@ fn parse_expr(
             // Pretty much everything else counts as some kind of string
             (Expression::String(s.item.clone()).spanned(s.span), None)
         }
+        ExpressionShape::Block => parse_block(s, scope),
         ExpressionShape::Any => {
             let shapes = vec![ExpressionShape::Integer, ExpressionShape::String];
             for shape in shapes.iter() {
@@ -110,6 +192,28 @@ fn parse_expr(
 /// Easy shorthand function to create a garbage expression at the given span
 pub fn garbage(span: Span) -> Spanned<Expression> {
     Expression::Garbage.spanned(span)
+}
+
+fn trim_curly_braces(input: &Spanned<String>) -> Spanned<String> {
+    let mut chars = input.item.chars();
+
+    match (chars.next(), chars.next_back()) {
+        (Some('{'), Some('}')) => chars
+            .collect::<String>()
+            .spanned(Span::new(input.span.start + 1, input.span.end - 1)),
+        _ => input.clone(),
+    }
+}
+
+fn trim_square_braces(input: &Spanned<String>) -> Spanned<String> {
+    let mut chars = input.item.chars();
+
+    match (chars.next(), chars.next_back()) {
+        (Some('['), Some(']')) => chars
+            .collect::<String>()
+            .spanned(Span::new(input.span.start + 1, input.span.end - 1)),
+        _ => input.clone(),
+    }
 }
 
 fn parse_external_call(
@@ -166,7 +270,7 @@ fn parse_internal_call(
 fn parse_value_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, Option<ParseError>) {
     let mut err = None;
 
-    let (head, error) = parse_expr(&call.elements[0], &ExpressionShape::String, scope);
+    let (head, error) = parse_expr(&call.elements[0], &ExpressionShape::Block, scope);
     let mut span = head.span;
     if err.is_none() {
         err = error;
@@ -174,7 +278,7 @@ fn parse_value_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, O
 
     let mut args = vec![];
     for arg in call.elements.iter().skip(1) {
-        let (arg, error) = parse_expr(arg, &ExpressionShape::Integer, scope);
+        let (arg, error) = parse_expr(arg, &ExpressionShape::Any, scope);
         if err.is_none() {
             err = error;
         }
@@ -199,7 +303,7 @@ fn parse_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, Option<
         )
     } else if call.elements[0].item.starts_with('^') {
         parse_external_call(call, scope)
-    } else if call.elements[0].item.starts_with('$') {
+    } else if call.elements[0].item.starts_with('$') || call.elements[0].item.starts_with('{') {
         parse_value_call(call, scope)
     } else if let Some(signature) = scope.get_signature(&call.elements[0].item) {
         parse_internal_call(call, &signature, scope)

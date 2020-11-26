@@ -99,6 +99,7 @@ pub type ParseSignature = Vec<ExpressionShape>;
 pub enum ExpressionShape {
     Integer,
     String,
+    Block,
     Any,
 }
 
@@ -125,10 +126,11 @@ pub enum Expression {
     String(String),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
     ExternalCall(Spanned<String>, Vec<Spanned<String>>),
+    Block(Option<Vec<Spanned<Expression>>>, Vec<ExpressionGroup>),
     Garbage,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExpressionPipeline {
     pub pipeline: Vec<Spanned<Expression>>,
 }
@@ -141,7 +143,7 @@ impl ExpressionPipeline {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExpressionGroup {
     pub pipelines: Vec<ExpressionPipeline>,
 }
@@ -160,6 +162,29 @@ pub struct LiteBlock {
 impl LiteBlock {
     pub fn new(groups: Vec<LiteGroup>) -> Self {
         Self { groups }
+    }
+    pub fn head(&self) -> Option<Spanned<String>> {
+        if let Some(group) = self.groups.get(0) {
+            if let Some(pipeline) = group.pipelines.get(0) {
+                if let Some(command) = pipeline.commands.get(0) {
+                    if let Some(head) = command.elements.get(0) {
+                        return Some(head.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+    pub fn remove_head(&mut self) {
+        if let Some(group) = self.groups.get_mut(0) {
+            if let Some(pipeline) = group.pipelines.get_mut(0) {
+                if let Some(command) = pipeline.commands.get_mut(0) {
+                    if !command.elements.is_empty() {
+                        command.elements.remove(0);
+                    }
+                }
+            }
+        }
     }
 }
 
