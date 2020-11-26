@@ -103,12 +103,18 @@ pub enum ExpressionShape {
     Any,
 }
 
-pub struct Scope {
-    pub parent: Option<Box<Scope>>,
+pub struct Scope<'a> {
+    pub parent: Option<&'a Scope<'a>>,
     pub commands: HashMap<String, ParseSignature>,
 }
 
-impl Scope {
+impl<'a> Scope<'a> {
+    pub fn new(parent: Option<&'a Scope>) -> Scope<'a> {
+        Scope {
+            parent,
+            commands: HashMap::new(),
+        }
+    }
     pub fn get_signature(&self, name: &str) -> Option<ParseSignature> {
         if let Some(x) = self.commands.get(name) {
             Some(x.clone())
@@ -124,6 +130,7 @@ impl Scope {
 pub enum Expression {
     Integer(BigInt),
     String(String),
+    SetVariable(String, Box<Spanned<Expression>>),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
     ExternalCall(Spanned<String>, Vec<Spanned<String>>),
     Block(Option<Vec<Spanned<Expression>>>, Vec<ExpressionGroup>),

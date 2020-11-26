@@ -140,7 +140,9 @@ fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
         None
     };
 
-    let (result, err) = parse_helper(lite_block, scope);
+    let mut scope = Scope::new(Some(scope));
+
+    let (result, err) = parse_helper(lite_block, &mut scope);
     if error.is_none() {
         error = err;
     }
@@ -170,9 +172,25 @@ fn parse_expr(
             // Pretty much everything else counts as some kind of string
             (Expression::String(s.item.clone()).spanned(s.span), None)
         }
-        ExpressionShape::Block => parse_block(s, scope),
+        ExpressionShape::Block => {
+            if s.item.starts_with('{') && s.item.ends_with('}') {
+                parse_block(s, scope)
+            } else {
+                (
+                    garbage(s.span),
+                    Some(ParseError::UnexpectedType {
+                        expected: "Block".into(),
+                        span: s.span,
+                    }),
+                )
+            }
+        }
         ExpressionShape::Any => {
-            let shapes = vec![ExpressionShape::Integer, ExpressionShape::String];
+            let shapes = vec![
+                ExpressionShape::Integer,
+                ExpressionShape::Block,
+                ExpressionShape::String,
+            ];
             for shape in shapes.iter() {
                 if let (s, None) = parse_expr(s, shape, scope) {
                     return (s, None);
@@ -292,7 +310,33 @@ fn parse_value_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, O
     )
 }
 
-fn parse_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, Option<ParseError>) {
+fn parse_set_variable(
+    call: LiteCommand,
+    scope: &Scope,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    if call.elements[0].item != "set" || call.elements.len() != 4 {
+        return (
+            garbage(call.elements[0].span),
+            Some(ParseError::UnexpectedType {
+                expected: "assignment".into(),
+                span: call.elements[0].span,
+            }),
+        );
+    }
+
+    let variable = &call.elements[1];
+    let (expr, err) = parse_expr(&call.elements[3], &ExpressionShape::Any, scope);
+
+    (
+        Expression::SetVariable(variable.item.clone(), Box::new(expr)).spanned(Span::new(
+            call.elements[0].span.start,
+            call.elements[3].span.end,
+        )),
+        err,
+    )
+}
+
+fn parse_call(call: LiteCommand, scope: &mut Scope) -> (Spanned<Expression>, Option<ParseError>) {
     if call.elements.is_empty() {
         (
             Expression::Garbage.spanned_unknown(),
@@ -305,6 +349,8 @@ fn parse_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, Option<
         parse_external_call(call, scope)
     } else if call.elements[0].item.starts_with('$') || call.elements[0].item.starts_with('{') {
         parse_value_call(call, scope)
+    } else if call.elements[0].item == "set" {
+        parse_set_variable(call, scope)
     } else if let Some(signature) = scope.get_signature(&call.elements[0].item) {
         parse_internal_call(call, &signature, scope)
     } else {
@@ -314,7 +360,7 @@ fn parse_call(call: LiteCommand, scope: &Scope) -> (Spanned<Expression>, Option<
 
 fn parse_helper(
     lite_block: LiteBlock,
-    scope: &Scope,
+    scope: &mut Scope,
 ) -> (Vec<ExpressionGroup>, Option<ParseError>) {
     let mut output = vec![];
     let mut err = None;
@@ -341,7 +387,7 @@ fn parse_helper(
 pub fn parse(
     input: &str,
     span_offset: usize,
-    scope: &Scope,
+    scope: &mut Scope,
 ) -> (Vec<ExpressionGroup>, Option<ParseError>) {
     let (output, error) = lex(input, span_offset);
     if error.is_some() {
