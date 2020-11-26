@@ -8,10 +8,13 @@ use language::{ExpressionShape, Scope};
 use parse::parse;
 
 fn main() {
-    let input = "this 34\nis { another; \npipeline } ;";
+    let input = "this 3 a\nis { another; \npipeline } ;";
     //let input = "?+󁃬z i￳.　";
     let mut commands = HashMap::new();
-    commands.insert("this".to_string(), vec![ExpressionShape::Integer]);
+    commands.insert(
+        "this".to_string(),
+        vec![ExpressionShape::Integer, ExpressionShape::Any],
+    );
 
     let scope = Box::new(Scope {
         parent: None,

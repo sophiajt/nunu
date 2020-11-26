@@ -2,8 +2,8 @@ use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-#[derive(Debug)]
-pub struct Spanned<T: Debug> {
+#[derive(Debug, Clone)]
+pub struct Spanned<T: Clone + Debug> {
     pub item: T,
     pub span: Span,
 }
@@ -17,8 +17,8 @@ pub enum ParseError {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Span {
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
 }
 impl Span {
     pub fn new(start: usize, end: usize) -> Span {
@@ -39,7 +39,7 @@ impl Span {
         }
     }
 }
-pub trait SpannedItem: Sized + Debug {
+pub trait SpannedItem: Sized + Debug + Clone {
     /// Converts a value into a Spanned value
     fn spanned(self, span: impl Into<Span>) -> Spanned<Self> {
         Spanned {
@@ -56,7 +56,7 @@ pub trait SpannedItem: Sized + Debug {
         }
     }
 }
-impl<T: Debug> SpannedItem for T {}
+impl<T: Debug + Clone> SpannedItem for T {}
 
 #[derive(Debug)]
 pub struct Token {
@@ -95,9 +95,11 @@ impl From<BlockKind> for char {
 
 pub type ParseSignature = Vec<ExpressionShape>;
 
+#[derive(Clone)]
 pub enum ExpressionShape {
     Integer,
     String,
+    Any,
 }
 
 pub struct Scope {
@@ -105,25 +107,36 @@ pub struct Scope {
     pub commands: HashMap<String, ParseSignature>,
 }
 
-#[derive(Debug)]
+impl Scope {
+    pub fn get_signature(&self, name: &str) -> Option<ParseSignature> {
+        if let Some(x) = self.commands.get(name) {
+            Some(x.clone())
+        } else if let Some(parent) = &self.parent {
+            parent.get_signature(name)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression {
     Integer(BigInt),
     String(String),
-    Call(Box<SpannedExpression>, Vec<SpannedExpression>),
+    InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
+    ExternalCall(Spanned<String>, Vec<Spanned<String>>),
     Garbage,
 }
 
-pub type SpannedExpression = Spanned<Expression>;
-
 #[derive(Debug)]
 pub struct ExpressionPipeline {
-    pub pipeline: Vec<SpannedExpression>,
+    pub pipeline: Vec<Spanned<Expression>>,
 }
 impl ExpressionPipeline {
     pub fn new() -> ExpressionPipeline {
         Self { pipeline: vec![] }
     }
-    pub fn push(&mut self, expression: SpannedExpression) {
+    pub fn push(&mut self, expression: Spanned<Expression>) {
         self.pipeline.push(expression)
     }
 }
