@@ -350,6 +350,41 @@ fn parse_set_variable(
     )
 }
 
+fn parse_set_env_variable(
+    call: LiteCommand,
+    scope: &Scope,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    if call.elements[0].item != "setenv" || call.elements.len() != 4 {
+        return (
+            garbage(call.elements[0].span),
+            Some(ParseError::UnexpectedType {
+                expected: "assignment".into(),
+                span: call.elements[0].span,
+            }),
+        );
+    }
+    if call.elements[2].item != "=" {
+        return (
+            garbage(call.elements[2].span),
+            Some(ParseError::UnexpectedType {
+                expected: "equals".into(),
+                span: call.elements[2].span,
+            }),
+        );
+    }
+
+    let variable = &call.elements[1];
+    let (expr, err) = parse_expr(&call.elements[3], &ExpressionShape::Any, scope);
+
+    (
+        Expression::SetEnvVariable(variable.item.clone(), Box::new(expr)).spanned(Span::new(
+            call.elements[0].span.start,
+            call.elements[3].span.end,
+        )),
+        err,
+    )
+}
+
 fn parse_definition(call: LiteCommand, scope: &mut Scope) -> Option<ParseError> {
     // A this point, we've already handled the prototype and put it into scope
     // So our main goal here is to parse the block now that the names and
@@ -414,6 +449,8 @@ fn parse_call(
         parse_value_call(call, scope)
     } else if call.elements[0].item == "set" {
         parse_set_variable(call, scope)
+    } else if call.elements[0].item == "setenv" {
+        parse_set_env_variable(call, scope)
     } else if let Some(signature) = scope.get_signature(&call.elements[0].item) {
         parse_internal_call(call, &signature, scope)
     } else {
