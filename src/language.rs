@@ -21,6 +21,7 @@ pub enum ParseError {
     UnexpectedEof(String, Span),
     UnexpectedPipe(Span),
     UnexpectedType { expected: String, span: Span },
+    DefinitionInPipeline(Span),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -103,7 +104,7 @@ impl From<BlockKind> for char {
 
 pub type ParseSignature = Vec<ExpressionShape>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ExpressionShape {
     Integer,
     String,
@@ -111,9 +112,10 @@ pub enum ExpressionShape {
     Any,
 }
 
+#[derive(Clone, Debug)]
 pub struct Scope<'a> {
     pub parent: Option<&'a Scope<'a>>,
-    pub commands: HashMap<String, ParseSignature>,
+    pub commands: HashMap<String, CommandDefinition>,
 }
 
 impl<'a> Scope<'a> {
@@ -125,7 +127,7 @@ impl<'a> Scope<'a> {
     }
     pub fn get_signature(&self, name: &str) -> Option<ParseSignature> {
         if let Some(x) = self.commands.get(name) {
-            Some(x.clone())
+            Some(x.into())
         } else if let Some(parent) = &self.parent {
             parent.get_signature(name)
         } else {
@@ -142,7 +144,8 @@ pub enum Expression {
     SetVariable(String, Box<Spanned<Expression>>),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
     ExternalCall(Spanned<String>, Vec<Spanned<String>>),
-    Block(Option<Vec<Spanned<Expression>>>, Vec<ExpressionGroup>),
+    Block(Option<Vec<Spanned<Expression>>>, ExpressionBlock),
+    Noop,
     Garbage,
 }
 
@@ -159,6 +162,12 @@ impl ExpressionPipeline {
     }
 }
 
+impl Default for ExpressionPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExpressionGroup {
     pub pipelines: Vec<ExpressionPipeline>,
@@ -169,6 +178,80 @@ impl ExpressionGroup {
     }
     pub fn push(&mut self, pipeline: ExpressionPipeline) {
         self.pipelines.push(pipeline)
+    }
+}
+
+impl Default for ExpressionGroup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExpressionBlock {
+    pub groups: Vec<ExpressionGroup>,
+    pub definitions: HashMap<String, CommandDefinition>,
+}
+
+impl ExpressionBlock {
+    pub fn new() -> ExpressionBlock {
+        Self {
+            groups: vec![],
+            definitions: HashMap::new(),
+        }
+    }
+    pub fn push(&mut self, pipeline: ExpressionGroup) {
+        self.groups.push(pipeline)
+    }
+}
+
+impl Default for ExpressionBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Parameter {
+    name: String,
+    shape: ExpressionShape,
+}
+impl Parameter {
+    pub fn new(name: String, shape: ExpressionShape) -> Self {
+        Self { name, shape }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct CommandDefinition {
+    pub params: Vec<Parameter>,
+    pub block: Option<ExpressionBlock>,
+}
+
+impl Into<ParseSignature> for CommandDefinition {
+    fn into(self) -> ParseSignature {
+        let mut output = vec![];
+        for param in self.params {
+            output.push(param.shape);
+        }
+
+        output
+    }
+}
+
+impl Into<ParseSignature> for &CommandDefinition {
+    fn into(self) -> ParseSignature {
+        let mut output = vec![];
+        for param in &self.params {
+            output.push(param.shape.clone());
+        }
+
+        output
+    }
+}
+
+impl CommandDefinition {
+    pub fn new(params: Vec<Parameter>, block: Option<ExpressionBlock>) -> Self {
+        Self { params, block }
     }
 }
 

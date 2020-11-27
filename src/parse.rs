@@ -1,7 +1,7 @@
 use crate::language::{
-    Expression, ExpressionGroup, ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand,
-    LiteGroup, LitePipeline, ParseError, ParseSignature, Scope, Span, Spanned, SpannedItem, Token,
-    TokenContents,
+    CommandDefinition, Expression, ExpressionBlock, ExpressionGroup, ExpressionPipeline,
+    ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Parameter, ParseError,
+    ParseSignature, Scope, Span, Spanned, SpannedItem, Token, TokenContents,
 };
 use crate::lite_parse::lex;
 
@@ -350,6 +350,41 @@ fn parse_set_variable(
     )
 }
 
+fn parse_definition(call: LiteCommand, scope: &mut Scope) -> Option<ParseError> {
+    // A this point, we've already handled the prototype and put it into scope
+    // So our main goal here is to parse the block now that the names and
+    // prototypes of adjacent commands are also available
+
+    if call.elements.len() == 4 {
+        let name = &call.elements[1].item;
+        let (block, err) = parse_block(&call.elements[3], scope);
+
+        let block = match block.item {
+            Expression::Block(_params, block) => {
+                // TODO: throw an error if params are available
+                block
+            }
+            _ => {
+                return Some(ParseError::UnexpectedType {
+                    expected: "block".into(),
+                    span: block.span,
+                });
+            }
+        };
+
+        if let Some(slot) = scope.commands.get_mut(name) {
+            slot.block = Some(block);
+        }
+
+        err
+    } else {
+        Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        })
+    }
+}
+
 fn parse_call(call: LiteCommand, scope: &mut Scope) -> (Spanned<Expression>, Option<ParseError>) {
     if call.elements.is_empty() {
         (
@@ -372,28 +407,124 @@ fn parse_call(call: LiteCommand, scope: &mut Scope) -> (Spanned<Expression>, Opt
     }
 }
 
-fn parse_helper(
-    lite_block: LiteBlock,
-    scope: &mut Scope,
-) -> (Vec<ExpressionGroup>, Option<ParseError>) {
-    let mut output = vec![];
+fn parse_definition_prototype(call: &LiteCommand, scope: &mut Scope) -> Option<ParseError> {
     let mut err = None;
 
+    if call.elements.len() != 4 {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    if call.elements[0].item != "def" {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    let name = call.elements[1].item.clone();
+    let (preparsed_params, error) = parse_list(&call.elements[2], scope);
+    if err.is_none() {
+        err = error;
+    }
+
+    let mut params = vec![];
+    for preparsed_param in preparsed_params {
+        match preparsed_param.item {
+            Expression::String(s) => {
+                let parts: Vec<_> = s.split(':').collect();
+                if parts.len() == 1 {
+                    params.push(Parameter::new(parts[0].to_string(), ExpressionShape::Any));
+                } else if parts.len() == 2 {
+                    let name = parts[0].to_string();
+                    let shape = match parts[1] {
+                        "int" => ExpressionShape::Integer,
+                        "string" => ExpressionShape::String,
+                        "block" => ExpressionShape::Block,
+                        "any" => ExpressionShape::Any,
+                        _ => {
+                            if err.is_none() {
+                                err = Some(ParseError::UnexpectedType {
+                                    expected: "param with known type".to_string(),
+                                    span: preparsed_param.span,
+                                });
+                            }
+                            ExpressionShape::Any
+                        }
+                    };
+                    params.push(Parameter::new(name, shape));
+                } else if err.is_none() {
+                    err = Some(ParseError::UnexpectedType {
+                        expected: "parameter with type".to_string(),
+                        span: preparsed_param.span,
+                    });
+                }
+            }
+            _ => {
+                if err.is_none() {
+                    err = Some(ParseError::UnexpectedType {
+                        expected: "parameter".to_string(),
+                        span: preparsed_param.span,
+                    });
+                }
+            }
+        }
+    }
+
+    scope
+        .commands
+        .insert(name, CommandDefinition::new(params, None));
+
+    err
+}
+
+fn parse_helper(lite_block: LiteBlock, scope: &mut Scope) -> (ExpressionBlock, Option<ParseError>) {
+    let mut output = ExpressionBlock::new();
+    let mut err = None;
+
+    // Check for custom commands first
+    for group in lite_block.groups.iter() {
+        for pipeline in &group.pipelines {
+            for call in &pipeline.commands {
+                if let Some(first) = call.elements.first() {
+                    if first.item == "def" {
+                        if pipeline.commands.len() > 1 && err.is_none() {
+                            err = Some(ParseError::DefinitionInPipeline(first.span));
+                        }
+                        parse_definition_prototype(call, scope);
+                    }
+                }
+            }
+        }
+    }
+
+    // Then the rest of the code
     for group in lite_block.groups {
         let mut out_group = ExpressionGroup::new();
         for pipeline in group.pipelines {
             let mut out_pipe = ExpressionPipeline::new();
             for call in pipeline.commands {
-                let (parsed, error) = parse_call(call, scope);
-                if err.is_none() {
-                    err = error;
+                if call.elements[0].item == "def" {
+                    let error = parse_definition(call, scope);
+                    if err.is_none() {
+                        err = error;
+                    }
+                } else {
+                    let (parsed, error) = parse_call(call, scope);
+                    if err.is_none() {
+                        err = error;
+                    }
+                    out_pipe.push(parsed);
                 }
-                out_pipe.push(parsed);
             }
             out_group.push(out_pipe);
         }
         output.push(out_group);
     }
+
+    println!("scope: {:#?}", scope);
 
     (output, err)
 }
@@ -402,14 +533,14 @@ pub fn parse(
     input: &str,
     span_offset: usize,
     scope: &mut Scope,
-) -> (Vec<ExpressionGroup>, Option<ParseError>) {
+) -> (ExpressionBlock, Option<ParseError>) {
     let (output, error) = lex(input, span_offset);
     if error.is_some() {
-        return (vec![], error);
+        return (ExpressionBlock::new(), error);
     }
     let (groups, error) = group(output);
     if error.is_some() {
-        return (vec![], error);
+        return (ExpressionBlock::new(), error);
     }
 
     parse_helper(groups, scope)

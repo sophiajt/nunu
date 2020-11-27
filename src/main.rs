@@ -4,7 +4,7 @@ mod language;
 mod lite_parse;
 mod parse;
 
-use language::{ExpressionShape, Scope};
+use language::{CommandDefinition, ExpressionShape, Parameter, Scope};
 use parse::parse;
 use std::io;
 
@@ -21,7 +21,13 @@ fn main() {
                 let mut commands = HashMap::new();
                 commands.insert(
                     "this".to_string(),
-                    vec![ExpressionShape::Integer, ExpressionShape::Any],
+                    CommandDefinition::new(
+                        vec![
+                            Parameter::new("a".into(), ExpressionShape::Integer),
+                            Parameter::new("b".into(), ExpressionShape::Any),
+                        ],
+                        None,
+                    ),
                 );
 
                 let mut scope = Box::new(Scope {
