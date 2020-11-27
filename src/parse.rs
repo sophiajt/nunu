@@ -127,7 +127,7 @@ fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
     // Check for a parameter list
     let params = if let Some(head) = lite_block.head() {
         if head.starts_with('[') {
-            let (params, err) = parse_list(&head, scope);
+            let (params, err) = parse_parameters(&head, scope);
             if error.is_none() {
                 error = err;
             }
@@ -385,7 +385,21 @@ fn parse_definition(call: LiteCommand, scope: &mut Scope) -> Option<ParseError> 
     }
 }
 
-fn parse_call(call: LiteCommand, scope: &mut Scope) -> (Spanned<Expression>, Option<ParseError>) {
+fn expand_aliases_in_call(call: &mut LiteCommand, scope: &Scope) {
+    if let Some(name) = call.elements.get(0) {
+        if let Some(mut expansion) = scope.get_alias(name) {
+            call.elements.remove(0);
+            expansion.append(&mut call.elements);
+            call.elements = expansion;
+        }
+    }
+}
+
+fn parse_call(
+    mut call: LiteCommand,
+    scope: &mut Scope,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    expand_aliases_in_call(&mut call, scope);
     if call.elements.is_empty() {
         (
             Expression::Garbage.spanned_unknown(),
@@ -407,25 +421,10 @@ fn parse_call(call: LiteCommand, scope: &mut Scope) -> (Spanned<Expression>, Opt
     }
 }
 
-fn parse_definition_prototype(call: &LiteCommand, scope: &mut Scope) -> Option<ParseError> {
+fn parse_parameters(s: &Spanned<String>, scope: &Scope) -> (Vec<Parameter>, Option<ParseError>) {
     let mut err = None;
 
-    if call.elements.len() != 4 {
-        return Some(ParseError::UnexpectedType {
-            expected: "definition".into(),
-            span: call.elements[0].span,
-        });
-    }
-
-    if call.elements[0].item != "def" {
-        return Some(ParseError::UnexpectedType {
-            expected: "definition".into(),
-            span: call.elements[0].span,
-        });
-    }
-
-    let name = call.elements[1].item.clone();
-    let (preparsed_params, error) = parse_list(&call.elements[2], scope);
+    let (preparsed_params, error) = parse_list(s, scope);
     if err.is_none() {
         err = error;
     }
@@ -473,11 +472,67 @@ fn parse_definition_prototype(call: &LiteCommand, scope: &mut Scope) -> Option<P
         }
     }
 
+    (params, err)
+}
+
+fn parse_definition_prototype(call: &LiteCommand, scope: &mut Scope) -> Option<ParseError> {
+    let mut err = None;
+
+    if call.elements.len() != 4 {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    if call.elements[0].item != "def" {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    let name = call.elements[1].item.clone();
+    let (params, error) = parse_parameters(&call.elements[2], scope);
+    if err.is_none() {
+        err = error;
+    }
+
     scope
         .commands
         .insert(name, CommandDefinition::new(params, None));
 
     err
+}
+
+fn parse_alias(call: LiteCommand, scope: &mut Scope) -> Option<ParseError> {
+    if call.elements.len() < 4 {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    if call.elements[0].item != "alias" {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    if call.elements[2].item != "=" {
+        return Some(ParseError::UnexpectedType {
+            expected: "definition".into(),
+            span: call.elements[0].span,
+        });
+    }
+
+    let name = call.elements[1].item.clone();
+    let args: Vec<_> = call.elements.into_iter().skip(3).collect();
+
+    scope.aliases.insert(name, args);
+
+    None
 }
 
 fn parse_helper(lite_block: LiteBlock, scope: &mut Scope) -> (ExpressionBlock, Option<ParseError>) {
@@ -511,6 +566,11 @@ fn parse_helper(lite_block: LiteBlock, scope: &mut Scope) -> (ExpressionBlock, O
                     if err.is_none() {
                         err = error;
                     }
+                } else if call.elements[0].item == "alias" {
+                    let error = parse_alias(call, scope);
+                    if err.is_none() {
+                        err = error;
+                    }
                 } else {
                     let (parsed, error) = parse_call(call, scope);
                     if err.is_none() {
@@ -519,12 +579,16 @@ fn parse_helper(lite_block: LiteBlock, scope: &mut Scope) -> (ExpressionBlock, O
                     out_pipe.push(parsed);
                 }
             }
-            out_group.push(out_pipe);
+            if !out_pipe.pipeline.is_empty() {
+                out_group.push(out_pipe);
+            }
         }
-        output.push(out_group);
+        if !out_group.pipelines.is_empty() {
+            output.push(out_group);
+        }
     }
 
-    println!("scope: {:#?}", scope);
+    output.definitions = scope.commands.clone();
 
     (output, err)
 }

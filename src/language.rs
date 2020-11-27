@@ -116,6 +116,7 @@ pub enum ExpressionShape {
 pub struct Scope<'a> {
     pub parent: Option<&'a Scope<'a>>,
     pub commands: HashMap<String, CommandDefinition>,
+    pub aliases: HashMap<String, Vec<Spanned<String>>>,
 }
 
 impl<'a> Scope<'a> {
@@ -123,6 +124,7 @@ impl<'a> Scope<'a> {
         Scope {
             parent,
             commands: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
     pub fn get_signature(&self, name: &str) -> Option<ParseSignature> {
@@ -130,6 +132,15 @@ impl<'a> Scope<'a> {
             Some(x.into())
         } else if let Some(parent) = &self.parent {
             parent.get_signature(name)
+        } else {
+            None
+        }
+    }
+    pub fn get_alias(&self, name: &str) -> Option<Vec<Spanned<String>>> {
+        if let Some(x) = self.aliases.get(name) {
+            Some(x.clone())
+        } else if let Some(parent) = &self.parent {
+            parent.get_alias(name)
         } else {
             None
         }
@@ -144,7 +155,7 @@ pub enum Expression {
     SetVariable(String, Box<Spanned<Expression>>),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
     ExternalCall(Spanned<String>, Vec<Spanned<String>>),
-    Block(Option<Vec<Spanned<Expression>>>, ExpressionBlock),
+    Block(Option<Vec<Parameter>>, ExpressionBlock),
     Noop,
     Garbage,
 }

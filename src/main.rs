@@ -30,9 +30,16 @@ fn main() {
                     ),
                 );
 
-                let mut scope = Box::new(Scope {
+                let scope = Box::new(Scope {
                     parent: None,
                     commands,
+                    aliases: HashMap::new(),
+                });
+
+                let mut scope = Box::new(Scope {
+                    parent: Some(&scope),
+                    commands: HashMap::new(),
+                    aliases: HashMap::new(),
                 });
 
                 println!("{:#?}", parse(&input, 0, &mut scope));
