@@ -1,9 +1,10 @@
 use crate::language::{
-    CommandDefinition, Expression, ExpressionBlock, ExpressionGroup, ExpressionPipeline,
-    ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Parameter, ParseError, Scope,
-    Span, Spanned, SpannedItem, Token, TokenContents,
+    ColumnPath, ColumnPathMember, CommandDefinition, Expression, ExpressionBlock, ExpressionGroup,
+    ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline,
+    Parameter, ParseError, Scope, Span, Spanned, SpannedItem, Token, TokenContents,
 };
 use crate::lite_parse::lex;
+use num_bigint::BigInt;
 
 fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
     let mut groups = vec![];
@@ -111,7 +112,141 @@ fn parse_list(
     (output, error)
 }
 
-fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Option<ParseError>) {
+fn parse_invocation(
+    lite_arg: &Spanned<String>,
+    scope: &Scope,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    // We have a command invocation
+    let string: String = lite_arg
+        .item
+        .chars()
+        .skip(2)
+        .take(lite_arg.item.len() - 3)
+        .collect();
+
+    let (parsed_block, err) = parse_block(
+        &string.spanned(Span::new(lite_arg.span.start + 2, lite_arg.span.end - 1)),
+        false,
+        scope,
+    );
+
+    match parsed_block.item {
+        Expression::Block(_, block) => (Expression::Invocation(block).spanned(lite_arg.span), err),
+        _ => (garbage(lite_arg.span), err),
+    }
+}
+
+/// Parses a column path, adding in the preceding reference to $it if it's elided
+pub fn parse_full_column_path(
+    lite_arg: &Spanned<String>,
+    scope: &Scope,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    let mut delimiter = '.';
+    let mut inside_delimiter = false;
+    let mut output = vec![];
+    let mut current_part = String::new();
+    let mut start_index = 0;
+    let mut last_index = 0;
+    let mut error = None;
+
+    let mut head = None;
+
+    for (idx, c) in lite_arg.item.char_indices() {
+        last_index = idx;
+        if inside_delimiter {
+            if c == delimiter {
+                inside_delimiter = false;
+            }
+        } else if c == '(' {
+            inside_delimiter = true;
+            delimiter = ')';
+        } else if c == '\'' || c == '"' {
+            inside_delimiter = true;
+            delimiter = c;
+        } else if c == '.' {
+            let part_span = Span::new(
+                lite_arg.span.start() + start_index,
+                lite_arg.span.start() + idx,
+            );
+
+            if head.is_none() && current_part.starts_with("$(") && current_part.ends_with(')') {
+                let (invoc, err) =
+                    parse_invocation(&current_part.clone().spanned(part_span), scope);
+                if error.is_none() {
+                    error = err;
+                }
+                head = Some(invoc);
+            } else if head.is_none() && current_part.starts_with('$') {
+                // We have the variable head
+                head = Some(Expression::Variable(current_part.clone()).spanned(part_span))
+            } else if let Ok(row_number) = current_part.parse::<u64>() {
+                output.push(ColumnPathMember::Int(BigInt::from(row_number)).spanned(part_span));
+            } else {
+                let current_part = trim_quotes(&current_part);
+                output.push(ColumnPathMember::String(current_part.clone()).spanned(part_span));
+            }
+            current_part.clear();
+            // Note: I believe this is safe because of the delimiter we're using, but if we get fancy with
+            // unicode we'll need to change this
+            start_index = idx + '.'.len_utf8();
+            continue;
+        }
+        current_part.push(c);
+    }
+
+    if !current_part.is_empty() {
+        let part_span = Span::new(
+            lite_arg.span.start() + start_index,
+            lite_arg.span.start() + last_index + 1,
+        );
+
+        if head.is_none() {
+            if current_part.starts_with("$(") && current_part.ends_with(')') {
+                let (invoc, err) = parse_invocation(&current_part.spanned(part_span), scope);
+                if error.is_none() {
+                    error = err;
+                }
+                head = Some(invoc);
+            } else if current_part.starts_with('$') {
+                head = Some(Expression::Variable(current_part).spanned(lite_arg.span));
+            } else if let Ok(row_number) = current_part.parse::<u64>() {
+                output.push(ColumnPathMember::Int(BigInt::from(row_number)).spanned(part_span));
+            } else {
+                let current_part = trim_quotes(&current_part);
+                output.push(ColumnPathMember::String(current_part).spanned(part_span));
+            }
+        } else if let Ok(row_number) = current_part.parse::<u64>() {
+            output.push(ColumnPathMember::Int(BigInt::from(row_number)).spanned(part_span));
+        } else {
+            let current_part = trim_quotes(&current_part);
+            output.push(ColumnPathMember::String(current_part).spanned(part_span));
+        }
+    }
+
+    if let Some(head) = head {
+        let column_path = ColumnPath::new(head, output);
+
+        (
+            Expression::ColumnPath(Box::new(column_path)).spanned(lite_arg.span),
+            error,
+        )
+    } else {
+        let column_path = ColumnPath::new(
+            Expression::Variable("$it".into()).spanned(lite_arg.span),
+            output,
+        );
+        (
+            Expression::ColumnPath(Box::new(column_path)).spanned(lite_arg.span),
+            error,
+        )
+    }
+}
+
+fn parse_block(
+    s: &Spanned<String>,
+    maybe_params: bool,
+    scope: &Scope,
+) -> (Spanned<Expression>, Option<ParseError>) {
     let contents = trim_curly_braces(&s);
     let mut error = None;
     let (output, err) = lex(&contents.item, contents.span.start);
@@ -124,15 +259,19 @@ fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
         return (garbage(s.span), err);
     }
 
-    // Check for a parameter list
-    let params = if let Some(head) = lite_block.head() {
-        if head.starts_with('[') {
-            let (params, err) = parse_parameters(&head, scope);
-            if error.is_none() {
-                error = err;
+    let params = if maybe_params {
+        // Check for a parameter list
+        if let Some(head) = lite_block.head() {
+            if head.starts_with('[') {
+                let (params, err) = parse_parameters(&head, scope);
+                if error.is_none() {
+                    error = err;
+                }
+                lite_block.remove_head();
+                Some(params)
+            } else {
+                None
             }
-            lite_block.remove_head();
-            Some(params)
         } else {
             None
         }
@@ -210,7 +349,7 @@ fn parse_expr(
 ) -> (Spanned<Expression>, Option<ParseError>) {
     // TODO: pass variable paths and invocations
     if s.starts_with('$') {
-        return (Expression::Variable(s.item.clone()).spanned(s.span), None);
+        return parse_full_column_path(s, scope);
     }
 
     match shape {
@@ -233,7 +372,7 @@ fn parse_expr(
         }
         ExpressionShape::Block => {
             if s.starts_with('{') && s.ends_with('}') {
-                parse_block(s, scope)
+                parse_block(s, true, scope)
             } else {
                 (
                     garbage(s.span),
@@ -319,6 +458,17 @@ fn trim_square_braces(input: &Spanned<String>) -> Spanned<String> {
             .collect::<String>()
             .spanned(Span::new(input.span.start + 1, input.span.end - 1)),
         _ => input.clone(),
+    }
+}
+
+fn trim_quotes(input: &str) -> String {
+    let mut chars = input.chars();
+
+    match (chars.next(), chars.next_back()) {
+        (Some('\''), Some('\'')) => chars.collect(),
+        (Some('"'), Some('"')) => chars.collect(),
+        (Some('`'), Some('`')) => chars.collect(),
+        _ => input.to_string(),
     }
 }
 
@@ -475,7 +625,7 @@ fn parse_definition(call: LiteCommand, scope: &mut Scope) -> Option<ParseError> 
 
     if call.elements.len() == 4 {
         let name = &call.elements[1].item;
-        let (block, err) = parse_block(&call.elements[3], scope);
+        let (block, err) = parse_block(&call.elements[3], false, scope);
 
         let block = match block.item {
             Expression::Block(_params, block) => {

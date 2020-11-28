@@ -24,7 +24,7 @@ pub enum ParseError {
     DefinitionInPipeline(Span),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -46,6 +46,14 @@ impl Span {
         if span.end > self.end {
             self.end = span.end;
         }
+    }
+
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    pub fn end(&self) -> usize {
+        self.end
     }
 }
 pub trait SpannedItem: Sized + Debug + Clone {
@@ -161,6 +169,8 @@ pub enum Expression {
     List(Vec<Spanned<Expression>>),
     Table(Vec<Spanned<Expression>>, Vec<Vec<Spanned<Expression>>>),
     Block(Option<Vec<Parameter>>, ExpressionBlock),
+    Invocation(ExpressionBlock),
+    ColumnPath(Box<ColumnPath>),
     Garbage,
 }
 
@@ -368,5 +378,24 @@ impl LiteCommand {
     }
     pub fn push(&mut self, element: Spanned<String>) {
         self.elements.push(element)
+    }
+}
+
+/// A PathMember that has yet to be spanned so that it can be used in later processing
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ColumnPathMember {
+    String(String),
+    Int(BigInt),
+}
+
+#[derive(Debug, Clone)]
+pub struct ColumnPath {
+    pub head: Spanned<Expression>,
+    pub tail: Vec<Spanned<ColumnPathMember>>,
+}
+
+impl ColumnPath {
+    pub fn new(head: Spanned<Expression>, tail: Vec<Spanned<ColumnPathMember>>) -> Self {
+        Self { head, tail }
     }
 }
