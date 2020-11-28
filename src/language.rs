@@ -1,9 +1,11 @@
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
+use std::cmp::{Ord, Ordering, PartialOrd};
 use std::fmt::Debug;
+use std::hash::{Hash, Hasher};
 use std::{collections::HashMap, ops::Deref};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct Spanned<T: Clone + Debug> {
     pub item: T,
     pub span: Span,
@@ -113,7 +115,7 @@ impl From<BlockKind> for char {
 
 pub type ParseSignature = Vec<ExpressionShape>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub enum ExpressionShape {
     Integer,
     Decimal,
@@ -173,7 +175,7 @@ impl Into<Number> for u64 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub enum Expression {
     Integer(BigInt),
     Decimal(BigDecimal),
@@ -192,7 +194,7 @@ pub enum Expression {
     Garbage,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct ExpressionPipeline {
     pub pipeline: Vec<Spanned<Expression>>,
 }
@@ -211,7 +213,7 @@ impl Default for ExpressionPipeline {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct ExpressionGroup {
     pub pipelines: Vec<ExpressionPipeline>,
 }
@@ -230,10 +232,59 @@ impl Default for ExpressionGroup {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ExpressionBlock {
     pub groups: Vec<ExpressionGroup>,
     pub definitions: HashMap<String, CommandDefinition>,
+}
+
+#[allow(clippy::derive_hash_xor_eq)]
+impl Hash for ExpressionBlock {
+    /// Create the hash function to allow the Hash trait for dictionaries
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let entries = self.definitions.clone();
+        let mut keys = entries.keys().collect::<Vec<&String>>();
+        keys.sort();
+        keys.hash(state);
+        entries
+            .values()
+            .collect::<Vec<&CommandDefinition>>()
+            .hash(state);
+    }
+}
+
+impl PartialOrd for ExpressionBlock {
+    /// Compare two dictionaries for sort ordering
+    fn partial_cmp(&self, other: &ExpressionBlock) -> Option<Ordering> {
+        let this: Vec<&String> = self.definitions.keys().collect();
+        let that: Vec<&String> = other.definitions.keys().collect();
+
+        if this != that {
+            return this.partial_cmp(&that);
+        }
+
+        let this: Vec<&CommandDefinition> = self.definitions.values().collect();
+        let that: Vec<&CommandDefinition> = other.definitions.values().collect();
+
+        this.partial_cmp(&that)
+    }
+}
+
+impl Ord for ExpressionBlock {
+    /// Compare two dictionaries for ordering
+    fn cmp(&self, other: &ExpressionBlock) -> Ordering {
+        let this: Vec<&String> = self.definitions.keys().collect();
+        let that: Vec<&String> = other.definitions.keys().collect();
+
+        if this != that {
+            return this.cmp(&that);
+        }
+
+        let this: Vec<&CommandDefinition> = self.definitions.values().collect();
+        let that: Vec<&CommandDefinition> = other.definitions.values().collect();
+
+        this.cmp(&that)
+    }
 }
 
 impl ExpressionBlock {
@@ -254,7 +305,7 @@ impl Default for ExpressionBlock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct Parameter {
     name: String,
     shape: ExpressionShape,
@@ -264,7 +315,7 @@ impl Parameter {
         Self { name, shape }
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct CommandDefinition {
     pub params: Vec<Parameter>,
     pub block: Option<ExpressionBlock>,
@@ -406,7 +457,7 @@ pub enum ColumnPathMember {
     Int(BigInt),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct ColumnPath {
     pub head: Spanned<Expression>,
     pub tail: Vec<Spanned<ColumnPathMember>>,
