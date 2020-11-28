@@ -563,22 +563,37 @@ fn trim_quotes(input: &str) -> String {
 
 fn parse_external_call(
     call: LiteCommand,
-    _scope: &Scope,
+    scope: &Scope,
 ) -> (Spanned<Expression>, Option<ParseError>) {
     let head = call.elements[0].clone();
     let head_span = head.span;
+    let mut error = None;
 
-    let args: Vec<Spanned<String>> = call.elements.into_iter().skip(1).collect();
+    let mut external_args = vec![];
 
-    let end_span = if let Some(end) = args.last() {
+    let end_span = if let Some(end) = call.elements.last() {
         end.span
     } else {
         head.span
     };
 
+    for arg in call.elements.into_iter().skip(1) {
+        if arg.starts_with('$') {
+            let (var_path, err) = parse_full_column_path(&arg, scope);
+
+            if error.is_none() {
+                error = err;
+            }
+            external_args.push(var_path);
+        } else {
+            external_args.push(Expression::String(arg.item).spanned(arg.span));
+        }
+    }
+
     (
-        Expression::ExternalCall(head, args).spanned(Span::new(head_span.start, end_span.end)),
-        None,
+        Expression::ExternalCall(head, external_args)
+            .spanned(Span::new(head_span.start, end_span.end)),
+        error,
     )
 }
 

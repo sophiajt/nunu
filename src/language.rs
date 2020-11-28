@@ -185,7 +185,7 @@ pub enum Expression {
     SetVariable(String, Box<Spanned<Expression>>),
     SetEnvVariable(String, Box<Spanned<Expression>>),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
-    ExternalCall(Spanned<String>, Vec<Spanned<String>>),
+    ExternalCall(Spanned<String>, Vec<Spanned<Expression>>),
     List(Vec<Spanned<Expression>>),
     Table(Vec<Spanned<Expression>>, Vec<Vec<Spanned<Expression>>>),
     Block(Option<Vec<Parameter>>, ExpressionBlock),
