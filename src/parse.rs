@@ -1,7 +1,7 @@
 use crate::language::{
     CommandDefinition, Expression, ExpressionBlock, ExpressionGroup, ExpressionPipeline,
-    ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Parameter, ParseError,
-    ParseSignature, Scope, Span, Spanned, SpannedItem, Token, TokenContents,
+    ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Parameter, ParseError, Scope,
+    Span, Spanned, SpannedItem, Token, TokenContents,
 };
 use crate::lite_parse::lex;
 
@@ -149,6 +149,60 @@ fn parse_block(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
     (Expression::Block(params, result).spanned(s.span), error)
 }
 
+fn parse_table(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Option<ParseError>) {
+    let contents = trim_square_braces(&s);
+    let mut error = None;
+    let (output, err) = lex(&contents.item, contents.span.start);
+    if err.is_some() {
+        return (garbage(s.span), err);
+    }
+
+    let (lite_block, err) = group(output);
+    if err.is_some() {
+        return (garbage(s.span), err);
+    }
+
+    let mut output = vec![];
+
+    if lite_block.groups.len() != 1
+        || lite_block.groups[0].pipelines.len() != 2
+        || lite_block.groups[0].pipelines[0].commands.len() != 1
+        || lite_block.groups[0].pipelines[1].commands.len() != 1
+        || lite_block.groups[0].pipelines[0].commands[0].elements.len() != 1
+        || lite_block.groups[0].pipelines[1].commands[0].elements.len() != 1
+    {
+        return (
+            garbage(s.span),
+            Some(ParseError::UnexpectedType {
+                expected: "table".into(),
+                span: s.span,
+            }),
+        );
+    }
+
+    // Header
+
+    let head = &lite_block.groups[0].pipelines[0].commands[0].elements[0];
+
+    let (headers, err) = parse_list(&head, scope);
+    if error.is_none() {
+        error = err;
+    }
+
+    // Cells
+    let lite_cells = &lite_block.groups[0].pipelines[1].commands[0];
+
+    for arg in &lite_cells.elements {
+        let (inner_cell, err) = parse_list(arg, scope);
+        if error.is_none() {
+            error = err;
+        }
+        output.push(inner_cell);
+    }
+
+    (Expression::Table(headers, output).spanned(s.span), error)
+}
+
 fn parse_expr(
     s: &Spanned<String>,
     shape: &ExpressionShape,
@@ -190,10 +244,39 @@ fn parse_expr(
                 )
             }
         }
+        ExpressionShape::Table => {
+            if s.starts_with('[') && s.ends_with(']') {
+                parse_table(s, scope)
+            } else {
+                (
+                    garbage(s.span),
+                    Some(ParseError::UnexpectedType {
+                        expected: "Table".into(),
+                        span: s.span,
+                    }),
+                )
+            }
+        }
+        ExpressionShape::List => {
+            if s.starts_with('[') && s.ends_with(']') {
+                let (result, err) = parse_list(s, scope);
+                (Expression::List(result).spanned(s.span), err)
+            } else {
+                (
+                    garbage(s.span),
+                    Some(ParseError::UnexpectedType {
+                        expected: "List".into(),
+                        span: s.span,
+                    }),
+                )
+            }
+        }
         ExpressionShape::Any => {
             let shapes = vec![
                 ExpressionShape::Integer,
                 ExpressionShape::Block,
+                ExpressionShape::Table,
+                ExpressionShape::List,
                 ExpressionShape::String,
             ];
             for shape in shapes.iter() {
@@ -262,7 +345,7 @@ fn parse_external_call(
 
 fn parse_internal_call(
     call: LiteCommand,
-    signature: &ParseSignature,
+    signature: &[ExpressionShape],
     scope: &Scope,
 ) -> (Spanned<Expression>, Option<ParseError>) {
     let mut err = None;

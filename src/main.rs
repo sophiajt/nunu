@@ -20,12 +20,9 @@ fn main() {
                 }
                 let mut commands = HashMap::new();
                 commands.insert(
-                    "this".to_string(),
+                    "echo".to_string(),
                     CommandDefinition::new(
-                        vec![
-                            Parameter::new("a".into(), ExpressionShape::Integer),
-                            Parameter::new("b".into(), ExpressionShape::Any),
-                        ],
+                        vec![Parameter::new("b".into(), ExpressionShape::Any)],
                         None,
                     ),
                 );

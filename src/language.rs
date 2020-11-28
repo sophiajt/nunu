@@ -109,6 +109,8 @@ pub enum ExpressionShape {
     Integer,
     String,
     Block,
+    Table,
+    List,
     Any,
 }
 
@@ -156,8 +158,9 @@ pub enum Expression {
     SetEnvVariable(String, Box<Spanned<Expression>>),
     InternalCall(Box<Spanned<Expression>>, Vec<Spanned<Expression>>),
     ExternalCall(Spanned<String>, Vec<Spanned<String>>),
+    List(Vec<Spanned<Expression>>),
+    Table(Vec<Spanned<Expression>>, Vec<Vec<Spanned<Expression>>>),
     Block(Option<Vec<Parameter>>, ExpressionBlock),
-    Noop,
     Garbage,
 }
 
@@ -267,6 +270,7 @@ impl CommandDefinition {
     }
 }
 
+#[derive(Debug)]
 pub struct LiteBlock {
     pub groups: Vec<LiteGroup>,
 }
