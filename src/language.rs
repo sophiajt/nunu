@@ -116,6 +116,8 @@ pub type ParseSignature = Vec<ExpressionShape>;
 #[derive(Debug, Clone)]
 pub enum ExpressionShape {
     Integer,
+    Decimal,
+    Number,
     String,
     Block,
     Table,
@@ -174,6 +176,7 @@ impl Into<Number> for u64 {
 #[derive(Debug, Clone)]
 pub enum Expression {
     Integer(BigInt),
+    Decimal(BigDecimal),
     TypedNumber(Spanned<Number>, Spanned<Unit>),
     String(String),
     Variable(String),

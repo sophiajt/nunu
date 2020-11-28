@@ -425,6 +425,34 @@ fn parse_expr(
                 )
             }
         }
+        ExpressionShape::Decimal => {
+            if let Some(i) = bigdecimal::BigDecimal::parse_bytes(s.as_bytes(), 10) {
+                (Expression::Decimal(i).spanned(s.span), None)
+            } else {
+                (
+                    Expression::Garbage.spanned(s.span),
+                    Some(ParseError::UnexpectedType {
+                        expected: "Decimal".into(),
+                        span: s.span,
+                    }),
+                )
+            }
+        }
+        ExpressionShape::Number => {
+            let shapes = vec![ExpressionShape::Integer, ExpressionShape::Decimal];
+            for shape in shapes.iter() {
+                if let (s, None) = parse_expr(s, shape, scope) {
+                    return (s, None);
+                }
+            }
+            (
+                garbage(s.span),
+                Some(ParseError::UnexpectedType {
+                    expected: "number".into(),
+                    span: s.span,
+                }),
+            )
+        }
         ExpressionShape::TypedNumber => parse_typed_number(s),
         ExpressionShape::String => {
             // Pretty much everything else counts as some kind of string
@@ -472,7 +500,7 @@ fn parse_expr(
         }
         ExpressionShape::Any => {
             let shapes = vec![
-                ExpressionShape::Integer,
+                ExpressionShape::Number,
                 ExpressionShape::TypedNumber,
                 ExpressionShape::Block,
                 ExpressionShape::Table,
