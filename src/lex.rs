@@ -46,7 +46,8 @@ pub fn bare(src: &mut Input, span_offset: usize) -> (Spanned<String>, Option<Par
             if let Some(BlockKind::Paren) = block_level.last() {
                 let _ = block_level.pop();
             }
-        } else if block_level.is_empty() && (c.is_whitespace() || c == '|' || c == ';') {
+        } else if block_level.is_empty() && (c.is_whitespace() || c == '|' || c == ';' || c == '#')
+        {
             break;
         }
         bare.push(c);
@@ -89,6 +90,14 @@ pub fn bare(src: &mut Input, span_offset: usize) -> (Spanned<String>, Option<Par
     }
 
     (bare.spanned(span), None)
+}
+
+fn skip_comment(input: &mut Input) {
+    for (_, c) in input {
+        if c == '\n' || c == '\r' {
+            break;
+        }
+    }
 }
 
 /// Breaks the input string into a vector of tokens. This tokenization only tries to classify separators like
@@ -135,6 +144,8 @@ pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) 
                 TokenContents::EOL,
                 Span::new(span_offset + idx, span_offset + idx + 1),
             ));
+        } else if *c == '#' {
+            skip_comment(&mut char_indices);
         } else if c.is_whitespace() {
             let _ = char_indices.next();
         } else {
