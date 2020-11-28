@@ -1,7 +1,7 @@
 use std::{collections::HashMap, io::Write};
 
 mod language;
-mod lite_parse;
+mod lex;
 mod parse;
 
 use language::{CommandDefinition, ExpressionShape, Parameter, Scope};

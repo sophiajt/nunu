@@ -3,7 +3,7 @@ use crate::language::{
     ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Number,
     Parameter, ParseError, Scope, Span, Spanned, SpannedItem, Token, TokenContents, Unit,
 };
-use crate::lite_parse::lex;
+use crate::lex::lex;
 use num_bigint::BigInt;
 
 fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
