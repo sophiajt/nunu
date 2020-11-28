@@ -108,6 +108,7 @@ pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) 
     let mut error = None;
 
     let mut output = vec![];
+    let mut is_complete = true;
 
     while let Some((idx, c)) = char_indices.peek() {
         if *c == '|' {
@@ -130,7 +131,11 @@ pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) 
                 TokenContents::Pipe,
                 Span::new(span_offset + idx, span_offset + idx + 1),
             ));
+            is_complete = false;
         } else if *c == ';' {
+            if !is_complete && error.is_none() {
+                error = Some(ParseError::UnexpectedSemicolon(Span::new(*idx, idx + 1)));
+            }
             let idx = *idx;
             let _ = char_indices.next();
             output.push(Token::new(
@@ -153,6 +158,7 @@ pub fn lex(input: &str, span_offset: usize) -> (Vec<Token>, Option<ParseError>) 
             if error.is_none() {
                 error = err;
             }
+            is_complete = true;
             let Spanned { item, span } = result;
             output.push(Token::new(TokenContents::Bare(item), span));
         }

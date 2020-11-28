@@ -12,9 +12,15 @@ fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
     let mut pipeline = LitePipeline::new();
     let mut command = LiteCommand::new();
 
+    let mut prev_token: Option<Token> = None;
     for token in tokens {
-        match token.contents {
+        match &token.contents {
             TokenContents::EOL => {
+                if let Some(prev) = &prev_token {
+                    if let TokenContents::Pipe = prev.contents {
+                        continue;
+                    }
+                }
                 if !command.is_empty() {
                     pipeline.push(command);
                     command = LiteCommand::new();
@@ -50,9 +56,10 @@ fn group(tokens: Vec<Token>) -> (LiteBlock, Option<ParseError>) {
                 }
             }
             TokenContents::Bare(bare) => {
-                command.push(bare.spanned(token.span));
+                command.push(bare.to_string().spanned(token.span));
             }
         }
+        prev_token = Some(token);
     }
     if !command.is_empty() {
         pipeline.push(command);

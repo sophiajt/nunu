@@ -23,6 +23,7 @@ impl<T: Clone + Debug> Deref for Spanned<T> {
 pub enum ParseError {
     UnexpectedEof(String, Span),
     UnexpectedPipe(Span),
+    UnexpectedSemicolon(Span),
     UnexpectedType { expected: String, span: Span },
     DefinitionInPipeline(Span),
 }
