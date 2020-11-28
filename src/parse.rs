@@ -1,7 +1,7 @@
 use crate::language::{
     ColumnPath, ColumnPathMember, CommandDefinition, Expression, ExpressionBlock, ExpressionGroup,
-    ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline,
-    Parameter, ParseError, Scope, Span, Spanned, SpannedItem, Token, TokenContents,
+    ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Number,
+    Parameter, ParseError, Scope, Span, Spanned, SpannedItem, Token, TokenContents, Unit,
 };
 use crate::lite_parse::lex;
 use num_bigint::BigInt;
@@ -342,6 +342,65 @@ fn parse_table(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
     (Expression::Table(headers, output).spanned(s.span), error)
 }
 
+/// Parse a typed number, eg '10kb'
+fn parse_typed_number(lite_arg: &Spanned<String>) -> (Spanned<Expression>, Option<ParseError>) {
+    let unit_groups = [
+        (Unit::Byte, vec!["b", "B"]),
+        (Unit::Kilobyte, vec!["kb", "KB", "Kb", "kB"]),
+        (Unit::Megabyte, vec!["mb", "MB", "Mb", "mB"]),
+        (Unit::Gigabyte, vec!["gb", "GB", "Gb", "gB"]),
+        (Unit::Terabyte, vec!["tb", "TB", "Tb", "tB"]),
+        (Unit::Petabyte, vec!["pb", "PB", "Pb", "pB"]),
+        (Unit::Nanosecond, vec!["ns"]),
+        (Unit::Microsecond, vec!["us"]),
+        (Unit::Millisecond, vec!["ms"]),
+        (Unit::Second, vec!["sec"]),
+        (Unit::Minute, vec!["min"]),
+        (Unit::Hour, vec!["hr"]),
+        (Unit::Day, vec!["day"]),
+        (Unit::Week, vec!["wk"]),
+        (Unit::Month, vec!["mon"]),
+        (Unit::Year, vec!["yr"]),
+    ];
+
+    for unit_group in unit_groups.iter() {
+        for unit in unit_group.1.iter() {
+            if lite_arg.item.ends_with(unit) {
+                let mut lhs = lite_arg.item.clone();
+
+                for _ in 0..unit.len() {
+                    lhs.pop();
+                }
+
+                // these units are allowed to be signed
+                if let Ok(x) = lhs.parse::<BigInt>() {
+                    let x = Number::Int(x);
+                    let lhs_span =
+                        Span::new(lite_arg.span.start(), lite_arg.span.start() + lhs.len());
+                    let unit_span =
+                        Span::new(lite_arg.span.start() + lhs.len(), lite_arg.span.end());
+                    return (
+                        Expression::TypedNumber(
+                            x.spanned(lhs_span),
+                            unit_group.0.spanned(unit_span),
+                        )
+                        .spanned(lite_arg.span),
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
+    (
+        garbage(lite_arg.span),
+        Some(ParseError::UnexpectedType {
+            expected: "unit".into(),
+            span: lite_arg.span,
+        }),
+    )
+}
+
 fn parse_expr(
     s: &Spanned<String>,
     shape: &ExpressionShape,
@@ -366,6 +425,7 @@ fn parse_expr(
                 )
             }
         }
+        ExpressionShape::TypedNumber => parse_typed_number(s),
         ExpressionShape::String => {
             // Pretty much everything else counts as some kind of string
             (Expression::String(s.item.clone()).spanned(s.span), None)
@@ -413,6 +473,7 @@ fn parse_expr(
         ExpressionShape::Any => {
             let shapes = vec![
                 ExpressionShape::Integer,
+                ExpressionShape::TypedNumber,
                 ExpressionShape::Block,
                 ExpressionShape::Table,
                 ExpressionShape::List,

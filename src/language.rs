@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use std::fmt::Debug;
 use std::{collections::HashMap, ops::Deref};
@@ -119,6 +120,7 @@ pub enum ExpressionShape {
     Block,
     Table,
     List,
+    TypedNumber,
     Any,
 }
 
@@ -157,9 +159,22 @@ impl<'a> Scope<'a> {
     }
 }
 
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
+pub enum Number {
+    Int(BigInt),
+    Decimal(BigDecimal),
+}
+
+impl Into<Number> for u64 {
+    fn into(self) -> Number {
+        Number::Int(BigInt::from(self))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Expression {
     Integer(BigInt),
+    TypedNumber(Spanned<Number>, Spanned<Unit>),
     String(String),
     Variable(String),
     SetVariable(String, Box<Spanned<Expression>>),
@@ -398,4 +413,27 @@ impl ColumnPath {
     pub fn new(head: Spanned<Expression>, tail: Vec<Spanned<ColumnPathMember>>) -> Self {
         Self { head, tail }
     }
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Copy)]
+pub enum Unit {
+    // Filesize units
+    Byte,
+    Kilobyte,
+    Megabyte,
+    Gigabyte,
+    Terabyte,
+    Petabyte,
+
+    // Duration units
+    Nanosecond,
+    Microsecond,
+    Millisecond,
+    Second,
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
 }
