@@ -1,7 +1,8 @@
 use crate::language::{
-    ColumnPath, ColumnPathMember, CommandDefinition, Expression, ExpressionBlock, ExpressionGroup,
-    ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand, LiteGroup, LitePipeline, Number,
-    Parameter, ParseError, Scope, Span, Spanned, SpannedItem, Token, TokenContents, Unit,
+    Binary, ColumnPath, ColumnPathMember, CommandDefinition, Expression, ExpressionBlock,
+    ExpressionGroup, ExpressionPipeline, ExpressionShape, LiteBlock, LiteCommand, LiteGroup,
+    LitePipeline, Number, Operator, Parameter, ParseError, Scope, Span, Spanned, SpannedItem,
+    Token, TokenContents, Unit,
 };
 use crate::lex::lex;
 use num_bigint::BigInt;
@@ -249,6 +250,218 @@ pub fn parse_full_column_path(
     }
 }
 
+/// This is a bit of a "fix-up" of previously parsed areas. In cases where we're in shorthand mode (eg in the `where` command), we need
+/// to use the original source to parse a column path. Without it, we'll lose a little too much information to parse it correctly. As we'll
+/// only know we were on the left-hand side of an expression after we do the full math parse, we need to do this step after rather than during
+/// the initial parse.
+fn shorthand_reparse(
+    left: Spanned<Expression>,
+    orig_left: Option<Spanned<String>>,
+    scope: &Scope,
+    shorthand_mode: bool,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    // If we're in shorthand mode, we need to reparse the left-hand side if possible
+    if shorthand_mode {
+        if let Some(orig_left) = orig_left {
+            parse_expr(&orig_left, &ExpressionShape::FullColumnPath, scope)
+        } else {
+            (left, None)
+        }
+    } else {
+        (left, None)
+    }
+}
+
+fn parse_parenthesized_expression(
+    lite_arg: &Spanned<String>,
+    scope: &Scope,
+    shorthand_mode: bool,
+) -> (Spanned<Expression>, Option<ParseError>) {
+    let mut chars = lite_arg.item.chars();
+
+    match (chars.next(), chars.next_back()) {
+        (Some('('), Some(')')) => {
+            // We have a literal row
+            let string: String = chars.collect();
+
+            // We haven't done much with the inner string, so let's go ahead and work with it
+            let (tokens, err) = lex(&string, lite_arg.span.start() + 1);
+            if err.is_some() {
+                return (garbage(lite_arg.span), err);
+            }
+
+            let (lite_block, err) = group(tokens);
+            if err.is_some() {
+                return (garbage(lite_arg.span), err);
+            }
+
+            if lite_block.groups.len() != 1 {
+                return (
+                    garbage(lite_arg.span),
+                    Some(ParseError::UnexpectedType {
+                        expected: "math expression".into(),
+                        span: lite_arg.span,
+                    }),
+                );
+            }
+
+            let mut lite_pipelines = lite_block.groups[0].clone();
+
+            let mut collection = vec![];
+            for lite_pipeline in lite_pipelines.pipelines.iter_mut() {
+                for lite_cmd in lite_pipeline.commands.iter_mut() {
+                    collection.append(&mut lite_cmd.elements);
+                }
+            }
+            let (_, expr, err) = parse_math_expression(0, &collection[..], scope, shorthand_mode);
+            (expr, err)
+        }
+        _ => (
+            garbage(lite_arg.span),
+            Some(ParseError::UnexpectedType {
+                expected: "table".into(),
+                span: lite_arg.span,
+            }),
+        ),
+    }
+}
+
+type ParensIntermediate = (Option<Spanned<String>>, Spanned<Expression>);
+
+fn parse_possibly_parenthesized(
+    lite_arg: &Spanned<String>,
+    scope: &Scope,
+    shorthand_mode: bool,
+) -> (ParensIntermediate, Option<ParseError>) {
+    if lite_arg.item.starts_with('(') {
+        let (lhs, err) = parse_parenthesized_expression(lite_arg, scope, shorthand_mode);
+        ((None, lhs), err)
+    } else {
+        let (lhs, err) = parse_expr(lite_arg, &ExpressionShape::Any, scope);
+        ((Some(lite_arg.clone()), lhs), err)
+    }
+}
+
+/// Handle parsing math expressions, complete with working with the precedence of the operators
+fn parse_math_expression(
+    incoming_idx: usize,
+    lite_args: &[Spanned<String>],
+    scope: &Scope,
+    shorthand_mode: bool,
+) -> (usize, Spanned<Expression>, Option<ParseError>) {
+    // Precedence parsing is included
+    // Short_hand mode means that the left-hand side of an expression can point to a column-path. To make this possible,
+    //   we parse as normal, but then go back and when we detect a left-hand side, reparse that value if it's a string
+
+    let mut idx = 0;
+    let mut error = None;
+
+    let mut working_exprs = vec![];
+    let mut prec = vec![];
+
+    let (lhs_working_expr, err) =
+        parse_possibly_parenthesized(&lite_args[idx], scope, shorthand_mode);
+
+    if error.is_none() {
+        error = err;
+    }
+    working_exprs.push(lhs_working_expr);
+
+    idx += 1;
+
+    prec.push(0);
+
+    while idx < lite_args.len() {
+        let (op, err) = parse_expr(&lite_args[idx], &ExpressionShape::Operator, scope);
+        if error.is_none() {
+            error = err;
+        }
+        idx += 1;
+
+        if idx < lite_args.len() {
+            let (rhs_working_expr, err) =
+                parse_possibly_parenthesized(&lite_args[idx], scope, shorthand_mode);
+
+            if error.is_none() {
+                error = err;
+            }
+
+            let next_prec = op.precedence();
+
+            if !prec.is_empty() && next_prec > *prec.last().expect("this shouldn't happen") {
+                prec.push(next_prec);
+                working_exprs.push((None, op));
+                working_exprs.push(rhs_working_expr);
+            } else {
+                while !prec.is_empty()
+                    && *prec.last().expect("This shouldn't happen") >= next_prec
+                    && next_prec > 0 // Not garbage
+                    && working_exprs.len() >= 3
+                {
+                    let (_, right) = working_exprs.pop().expect("This shouldn't be possible");
+                    let (_, op) = working_exprs.pop().expect("This shouldn't be possible");
+                    let (orig_left, left) =
+                        working_exprs.pop().expect("This shouldn't be possible");
+
+                    // If we're in shorthand mode, we need to reparse the left-hand side if possibe
+                    let (left, err) = shorthand_reparse(left, orig_left, scope, shorthand_mode);
+                    if error.is_none() {
+                        error = err;
+                    }
+
+                    let span = Span::new(left.span.start(), right.span.end());
+                    working_exprs.push((
+                        None,
+                        Expression::Binary(Box::new(Binary { left, op, right })).spanned(span),
+                    ));
+                    prec.pop();
+                }
+                working_exprs.push((None, op));
+                working_exprs.push(rhs_working_expr);
+                prec.push(next_prec);
+            }
+
+            idx += 1;
+        } else {
+            if error.is_none() {
+                error = Some(ParseError::MissingMandatoryPositional(
+                    "right hand side".into(),
+                    lite_args[idx - 1].span,
+                ));
+            }
+            working_exprs.push((None, garbage(op.span)));
+            working_exprs.push((None, garbage(op.span)));
+            prec.push(0);
+        }
+    }
+
+    while working_exprs.len() >= 3 {
+        // Pop 3 and create and expression, push and repeat
+        let (_, right) = working_exprs.pop().expect("This shouldn't be possible");
+        let (_, op) = working_exprs.pop().expect("This shouldn't be possible");
+        let (orig_left, left) = working_exprs.pop().expect("This shouldn't be possible");
+
+        let (left, err) = shorthand_reparse(left, orig_left, scope, shorthand_mode);
+        if error.is_none() {
+            error = err;
+        }
+
+        let span = Span::new(left.span.start(), right.span.end());
+        working_exprs.push((
+            None,
+            Expression::Binary(Box::new(Binary { left, op, right })).spanned(span),
+        ));
+    }
+
+    let (orig_left, left) = working_exprs.pop().expect("This shouldn't be possible");
+    let (left, err) = shorthand_reparse(left, orig_left, scope, shorthand_mode);
+    if error.is_none() {
+        error = err;
+    }
+
+    (incoming_idx + idx, left, error)
+}
+
 fn parse_block(
     s: &Spanned<String>,
     maybe_params: bool,
@@ -347,6 +560,40 @@ fn parse_table(s: &Spanned<String>, scope: &Scope) -> (Spanned<Expression>, Opti
     }
 
     (Expression::Table(headers, output).spanned(s.span), error)
+}
+
+/// Parse any allowed operator, including word-based operators
+fn parse_operator(lite_arg: &Spanned<String>) -> (Spanned<Expression>, Option<ParseError>) {
+    let operator = match &lite_arg.item[..] {
+        "==" => Operator::Equal,
+        "!=" => Operator::NotEqual,
+        "<" => Operator::LessThan,
+        "<=" => Operator::LessThanOrEqual,
+        ">" => Operator::GreaterThan,
+        ">=" => Operator::GreaterThanOrEqual,
+        "=~" => Operator::Contains,
+        "!~" => Operator::NotContains,
+        "+" => Operator::Plus,
+        "-" => Operator::Minus,
+        "*" => Operator::Multiply,
+        "/" => Operator::Divide,
+        "in" => Operator::In,
+        "not-in" => Operator::NotIn,
+        "mod" => Operator::Modulo,
+        "&&" => Operator::And,
+        "||" => Operator::Or,
+        _ => {
+            return (
+                garbage(lite_arg.span),
+                Some(ParseError::UnexpectedType {
+                    expected: "operator".into(),
+                    span: lite_arg.span,
+                }),
+            );
+        }
+    };
+
+    (Expression::Operator(operator).spanned(lite_arg.span), None)
 }
 
 /// Parse a typed number, eg '10kb'
@@ -465,7 +712,7 @@ fn parse_expr(
             // Pretty much everything else counts as some kind of string
             (Expression::String(s.item.clone()).spanned(s.span), None)
         }
-        ExpressionShape::Block => {
+        ExpressionShape::Block | ExpressionShape::Math => {
             if s.starts_with('{') && s.ends_with('}') {
                 parse_block(s, true, scope)
             } else {
@@ -505,6 +752,8 @@ fn parse_expr(
                 )
             }
         }
+        ExpressionShape::FullColumnPath => parse_full_column_path(s, scope),
+        ExpressionShape::Operator => parse_operator(s),
         ExpressionShape::Any => {
             let shapes = vec![
                 ExpressionShape::Number,
@@ -795,6 +1044,9 @@ fn parse_call(
         parse_set_variable(call, scope)
     } else if call.elements[0].item == "setenv" {
         parse_set_env_variable(call, scope)
+    } else if call.elements[0].item == "=" {
+        let (_, expr, err) = parse_math_expression(0, &call.elements[1..], scope, false);
+        (expr, err)
     } else if let Some(signature) = scope.get_signature(&call.elements[0].item) {
         parse_internal_call(call, &signature, scope)
     } else {

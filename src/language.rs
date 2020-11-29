@@ -26,6 +26,7 @@ pub enum ParseError {
     UnexpectedSemicolon(Span),
     UnexpectedType { expected: String, span: Span },
     DefinitionInPipeline(Span),
+    MissingMandatoryPositional(String, Span),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -79,7 +80,7 @@ pub trait SpannedItem: Sized + Debug + Clone {
 }
 impl<T: Debug + Clone> SpannedItem for T {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub contents: TokenContents,
     pub span: Span,
@@ -90,7 +91,7 @@ impl Token {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TokenContents {
     Bare(String),
     Pipe,
@@ -126,6 +127,9 @@ pub enum ExpressionShape {
     Table,
     List,
     TypedNumber,
+    FullColumnPath,
+    Operator,
+    Math,
     Any,
 }
 
@@ -192,7 +196,37 @@ pub enum Expression {
     Block(Option<Vec<Parameter>>, ExpressionBlock),
     Invocation(ExpressionBlock),
     ColumnPath(Box<ColumnPath>),
+    Operator(Operator),
+    Binary(Box<Binary>),
     Garbage,
+}
+
+impl Expression {
+    pub fn precedence(&self) -> usize {
+        match self {
+            Expression::Operator(operator) => {
+                // Higher precedence binds tighter
+
+                match operator {
+                    Operator::Multiply | Operator::Divide | Operator::Modulo => 100,
+                    Operator::Plus | Operator::Minus => 90,
+                    Operator::NotContains
+                    | Operator::Contains
+                    | Operator::LessThan
+                    | Operator::LessThanOrEqual
+                    | Operator::GreaterThan
+                    | Operator::GreaterThanOrEqual
+                    | Operator::Equal
+                    | Operator::NotEqual
+                    | Operator::In
+                    | Operator::NotIn => 80,
+                    Operator::And => 50,
+                    Operator::Or => 40, // TODO: should we have And and Or be different precedence?
+                }
+            }
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
@@ -393,7 +427,7 @@ impl LiteBlock {
 /// ```
 /// > do this | do that | do one more; finally another thing
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LiteGroup {
     pub pipelines: Vec<LitePipeline>,
 }
@@ -414,7 +448,7 @@ impl LiteGroup {
 /// ```
 /// > ls | where size > 10kb
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LitePipeline {
     pub commands: Vec<LiteCommand>,
 }
@@ -435,7 +469,7 @@ impl LitePipeline {
 /// ```
 /// ls -la foo
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LiteCommand {
     pub elements: Vec<Spanned<String>>,
 }
@@ -491,4 +525,32 @@ pub enum Unit {
     Week,
     Month,
     Year,
+}
+
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, Eq, Hash, PartialEq)]
+pub enum Operator {
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual,
+    Contains,
+    NotContains,
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    In,
+    NotIn,
+    Modulo,
+    And,
+    Or,
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
+pub struct Binary {
+    pub left: Spanned<Expression>,
+    pub op: Spanned<Expression>,
+    pub right: Spanned<Expression>,
 }
